@@ -34,7 +34,26 @@ function framebuffer:_updateFull()
     end
 end
 
+-- Returns the size (in pixels) the shadow buffer should have.
+-- In multi-window mode (split-screen, freeform), the display metrics returned by getScreenWidth/Height
+-- don't match our window, so we use the actual size of the native window (i.e., the surface we blit to).
+-- Otherwise, we keep using getScreenWidth/Height, as those may purposefully differ from the window size
+-- (e.g., the launcher subtracts the notch/cutout inset in some orientations).
+-- NOTE: android.isInMultiWindowMode may not exist on older launchers, in which case nothing changes.
+function framebuffer:getNativeWindowSize()
+    local window = android.app.window
+    if window ~= nil and android.isInMultiWindowMode and android.isInMultiWindowMode() then
+        local w = tonumber(android.lib.ANativeWindow_getWidth(window))
+        local h = tonumber(android.lib.ANativeWindow_getHeight(window))
+        if w > 0 and h > 0 then
+            return w, h
+        end
+    end
+    return android.getScreenWidth(), android.getScreenHeight()
+end
+
 function framebuffer:init()
+    android.screen.width, android.screen.height = self:getNativeWindowSize()
     -- we present this buffer to the outside
     self.bb = BB.new(android.screen.width, android.screen.height, BB.TYPE_BBRGB32)
     self.bb:fill(BB.COLOR_WHITE)
@@ -44,8 +63,7 @@ end
 
 -- resize on rotation or split view.
 function framebuffer:resize()
-    android.screen.width = android.getScreenWidth()
-    android.screen.height = android.getScreenHeight()
+    android.screen.width, android.screen.height = self:getNativeWindowSize()
     local rotation
     local inverse
     if self.bb then
@@ -64,6 +82,8 @@ function framebuffer:resize()
     end
 
     self.bb:fill(inverse and BB.COLOR_BLACK or BB.COLOR_WHITE)
+    -- Like fb:init, in unrotated coordinates
+    self.screen_size = { w = android.screen.width, h = android.screen.height }
     self:_updateWindow()
 end
 
@@ -114,6 +134,8 @@ function framebuffer:_updateWindow()
     end
 
     if bb then
+        -- NOTE: The window buffer may transiently differ in size from ours (e.g., while being resized).
+        --       That's fine, as the blits below are clipped to the smallest of both buffers.
         local ext_bb = self.full_bb or self.bb
         -- Rotations and inverse are applied in the base ffi/framebuffer class, so our shadow buffer is already inverted and rotated.
         -- All we need is to do is simply clone the invert and rotation settings, so that the blit below becomes 1:1 copy.
